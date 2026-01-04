@@ -10,8 +10,8 @@ if [ -z "$SESSION_ID" ]; then
     exit 1
 fi
 
-# Derive paths (same logic as claude-prune)
-PROJECT_DIR=$(pwd | sed 's/[\/.]/-/g')
+# Derive paths - transform: / . space _ all become -
+PROJECT_DIR=$(pwd | sed 's/[\/. _]/-/g')
 SESSION_FILE="$HOME/.claude/projects/$PROJECT_DIR/$SESSION_ID.jsonl"
 
 if [ ! -f "$SESSION_FILE" ]; then
@@ -27,35 +27,92 @@ HANDOFF_FILE="$HANDOFF_DIR/${TIMESTAMP}_session-handoff.md"
 # Ensure handoff directory exists
 mkdir -p "$HANDOFF_DIR"
 
-# Resolve script location
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# Resolve script location (follow symlinks)
+SCRIPT_PATH="$0"
+if [ -L "$SCRIPT_PATH" ]; then
+    SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+fi
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
-# Read the analysis prompt
-ANALYSIS_PROMPT=$(cat "$PROJECT_ROOT/prompts/analyze-transcript-for-handoff.md")
+# Create temp files
+TEMP_PROMPT=$(mktemp)
+TEMP_SESSION=$(mktemp)
+trap "rm -f $TEMP_PROMPT $TEMP_SESSION" EXIT
 
-# Create the full prompt with session content
-FULL_PROMPT="$ANALYSIS_PROMPT
+# Prune session to last N assistant messages (like claude-prune)
+# This keeps complete message exchanges and stays under context limit
+MAX_ASSISTANT_MSGS=15
 
----
+node -e '
+const fs = require("fs");
+const lines = fs.readFileSync(process.argv[1], "utf8").trim().split("\n");
+const keep = parseInt(process.argv[2], 10);
 
-## Session Transcript
+const MSG_TYPES = new Set(["user", "assistant", "system"]);
+const assistantIndexes = [];
 
-$(cat "$SESSION_FILE")"
+lines.forEach((ln, i) => {
+  if (i === 0) return;
+  try {
+    const { type } = JSON.parse(ln);
+    if (type === "assistant") assistantIndexes.push(i);
+  } catch {}
+});
+
+let cutFrom = 0;
+if (assistantIndexes.length > keep) {
+  cutFrom = assistantIndexes[assistantIndexes.length - keep];
+}
+
+const outLines = [lines[0]]; // keep header
+let dropped = 0;
+
+lines.forEach((ln, i) => {
+  if (i === 0) return;
+  let isMsg = false;
+  try { isMsg = MSG_TYPES.has(JSON.parse(ln).type); } catch {}
+
+  if (isMsg) {
+    if (i >= cutFrom) {
+      outLines.push(ln);
+    } else {
+      dropped++;
+    }
+  } else {
+    if (i >= cutFrom) outLines.push(ln);
+  }
+});
+
+if (dropped > 0) {
+  console.error(`(Pruned: kept last ${keep} assistant messages, dropped ${dropped} earlier messages)`);
+}
+console.log(outLines.join("\n"));
+' "$SESSION_FILE" "$MAX_ASSISTANT_MSGS" > "$TEMP_SESSION"
+
+cat "$PROJECT_ROOT/prompts/analyze-transcript-for-handoff.md" > "$TEMP_PROMPT"
+echo "" >> "$TEMP_PROMPT"
+echo "---" >> "$TEMP_PROMPT"
+echo "" >> "$TEMP_PROMPT"
+echo "## Session Transcript" >> "$TEMP_PROMPT"
+echo "" >> "$TEMP_PROMPT"
+cat "$TEMP_SESSION" >> "$TEMP_PROMPT"
 
 echo "Analyzing session $SESSION_ID..."
 
-# Run claude --print to generate the handoff
-claude --print "$FULL_PROMPT" > "$HANDOFF_FILE"
+# Run claude --print, piping the prompt via stdin
+cat "$TEMP_PROMPT" | claude --print > "$HANDOFF_FILE"
 
 echo "Handoff saved to: $HANDOFF_FILE"
 echo ""
 echo "Starting fresh session with handoff context..."
 
 # Build resume prompt with handoff content
-RESUME_PROMPT=$(cat "$PROJECT_ROOT/prompts/resume-from-handoff.md")
-RESUME_PROMPT="$RESUME_PROMPT
-$(cat "$HANDOFF_FILE")"
+TEMP_RESUME=$(mktemp)
+trap "rm -f $TEMP_PROMPT $TEMP_SESSION $TEMP_RESUME" EXIT
 
-# Launch fresh interactive session
-claude "$RESUME_PROMPT"
+cat "$PROJECT_ROOT/prompts/resume-from-handoff.md" > "$TEMP_RESUME"
+cat "$HANDOFF_FILE" >> "$TEMP_RESUME"
+
+# Launch fresh interactive session with handoff as initial prompt
+claude "$(cat "$TEMP_RESUME")"
