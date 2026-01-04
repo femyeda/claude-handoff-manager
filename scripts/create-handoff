@@ -1,0 +1,61 @@
+#!/bin/bash
+set -e
+
+# Usage: create-handoff <session_id>
+
+SESSION_ID="$1"
+
+if [ -z "$SESSION_ID" ]; then
+    echo "Usage: create-handoff <session_id>"
+    exit 1
+fi
+
+# Derive paths (same logic as claude-prune)
+PROJECT_DIR=$(pwd | sed 's/[\/.]/-/g')
+SESSION_FILE="$HOME/.claude/projects/$PROJECT_DIR/$SESSION_ID.jsonl"
+
+if [ ! -f "$SESSION_FILE" ]; then
+    echo "Session file not found: $SESSION_FILE"
+    exit 1
+fi
+
+# Generate timestamp for handoff filename
+TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
+HANDOFF_DIR="thoughts/shared/handoffs/general"
+HANDOFF_FILE="$HANDOFF_DIR/${TIMESTAMP}_session-handoff.md"
+
+# Ensure handoff directory exists
+mkdir -p "$HANDOFF_DIR"
+
+# Resolve script location
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+
+# Read the analysis prompt
+ANALYSIS_PROMPT=$(cat "$PROJECT_ROOT/prompts/analyze-transcript-for-handoff.md")
+
+# Create the full prompt with session content
+FULL_PROMPT="$ANALYSIS_PROMPT
+
+---
+
+## Session Transcript
+
+$(cat "$SESSION_FILE")"
+
+echo "Analyzing session $SESSION_ID..."
+
+# Run claude --print to generate the handoff
+claude --print "$FULL_PROMPT" > "$HANDOFF_FILE"
+
+echo "Handoff saved to: $HANDOFF_FILE"
+echo ""
+echo "Starting fresh session with handoff context..."
+
+# Build resume prompt with handoff content
+RESUME_PROMPT=$(cat "$PROJECT_ROOT/prompts/resume-from-handoff.md")
+RESUME_PROMPT="$RESUME_PROMPT
+$(cat "$HANDOFF_FILE")"
+
+# Launch fresh interactive session
+claude "$RESUME_PROMPT"
