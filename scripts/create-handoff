@@ -6,6 +6,7 @@ set -e
 SAFE_MODE=false
 SESSION_ID=""
 USER_MESSAGE=""
+KEEP_MSGS=""
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -18,11 +19,16 @@ while [[ $# -gt 0 ]]; do
             USER_MESSAGE="$2"
             shift 2
             ;;
+        -k|--keep)
+            KEEP_MSGS="$2"
+            shift 2
+            ;;
         -h|--help)
             echo "Usage: create-handoff [options] <session_id>"
             echo "       create-handoff --list"
             echo ""
             echo "Options:"
+            echo "  -k, --keep <N>       Keep last N assistant messages (default: 15)"
             echo "  -m, --message <msg>  Append a message to the resume prompt"
             echo "  --list               List recent sessions across all projects"
             echo "  --safe               Run without --dangerously-skip-permissions"
@@ -91,7 +97,7 @@ trap "rm -f $TEMP_PROMPT $TEMP_SESSION" EXIT
 
 # Prune session to last N assistant messages (like claude-prune)
 # This keeps complete message exchanges and stays under context limit
-MAX_ASSISTANT_MSGS=15
+MAX_ASSISTANT_MSGS=${KEEP_MSGS:-15}
 
 node -e '
 const fs = require("fs");

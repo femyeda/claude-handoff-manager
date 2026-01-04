@@ -9,6 +9,7 @@ Generate a handoff document from a Claude Code session and resume work in a fres
 ```bash
 create-handoff <session_id>
 create-handoff --list              # List recent sessions
+create-handoff -k 25 <session_id>  # Keep last 25 assistant messages (default: 15)
 create-handoff -m "continue X"     # Add instructions to the resume prompt
 create-handoff --safe <session_id> # Run without --dangerously-skip-permissions
 ```
