@@ -15,10 +15,29 @@ while [[ $# -gt 0 ]]; do
             ;;
         -h|--help)
             echo "Usage: create-handoff [--safe] <session_id>"
+            echo "       create-handoff --list"
             echo ""
             echo "Options:"
-            echo "  --safe    Run without --dangerously-skip-permissions"
+            echo "  --list        List recent sessions across all projects"
+            echo "  --safe        Run without --dangerously-skip-permissions"
             echo "  -h, --help    Show this help message"
+            exit 0
+            ;;
+        --list)
+            echo "Recent sessions:"
+            echo ""
+            find "$HOME/.claude/projects" -name "*.jsonl" -type f -print0 2>/dev/null | \
+                xargs -0 ls -lt 2>/dev/null | \
+                head -20 | \
+                while read -r line; do
+                    # Extract filename and get session ID (basename without .jsonl)
+                    filepath=$(echo "$line" | awk '{print $NF}')
+                    session_id=$(basename "$filepath" .jsonl)
+                    mod_date=$(echo "$line" | awk '{print $6, $7, $8}')
+                    # Extract project dir from path
+                    project_dir=$(dirname "$filepath" | xargs basename)
+                    printf "%-38s  %-20s  %s\n" "$session_id" "$mod_date" "$project_dir"
+                done
             exit 0
             ;;
         *)
@@ -33,12 +52,13 @@ if [ -z "$SESSION_ID" ]; then
     exit 1
 fi
 
-# Derive paths - transform: / . space _ all become -
-PROJECT_DIR=$(pwd | sed 's/[\/. _]/-/g')
-SESSION_FILE="$HOME/.claude/projects/$PROJECT_DIR/$SESSION_ID.jsonl"
+# Find session file across all projects
+SESSION_FILE=$(find "$HOME/.claude/projects" -name "${SESSION_ID}.jsonl" 2>/dev/null | head -1)
 
-if [ ! -f "$SESSION_FILE" ]; then
-    echo "Session file not found: $SESSION_FILE"
+if [ -z "$SESSION_FILE" ]; then
+    echo "Session not found: $SESSION_ID"
+    echo ""
+    echo "Hint: Use 'create-handoff --list' to see available sessions"
     exit 1
 fi
 
