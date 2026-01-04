@@ -5,6 +5,7 @@ set -e
 
 SAFE_MODE=false
 SESSION_ID=""
+USER_MESSAGE=""
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -13,14 +14,19 @@ while [[ $# -gt 0 ]]; do
             SAFE_MODE=true
             shift
             ;;
+        -m|--message)
+            USER_MESSAGE="$2"
+            shift 2
+            ;;
         -h|--help)
-            echo "Usage: create-handoff [--safe] <session_id>"
+            echo "Usage: create-handoff [options] <session_id>"
             echo "       create-handoff --list"
             echo ""
             echo "Options:"
-            echo "  --list        List recent sessions across all projects"
-            echo "  --safe        Run without --dangerously-skip-permissions"
-            echo "  -h, --help    Show this help message"
+            echo "  -m, --message <msg>  Append a message to the resume prompt"
+            echo "  --list               List recent sessions across all projects"
+            echo "  --safe               Run without --dangerously-skip-permissions"
+            echo "  -h, --help           Show this help message"
             exit 0
             ;;
         --list)
@@ -156,6 +162,16 @@ trap "rm -f $TEMP_PROMPT $TEMP_SESSION $TEMP_RESUME" EXIT
 
 cat "$PROJECT_ROOT/prompts/resume-from-handoff.md" > "$TEMP_RESUME"
 cat "$HANDOFF_FILE" >> "$TEMP_RESUME"
+
+# Append user message if provided
+if [ -n "$USER_MESSAGE" ]; then
+    echo "" >> "$TEMP_RESUME"
+    echo "---" >> "$TEMP_RESUME"
+    echo "" >> "$TEMP_RESUME"
+    echo "## Additional Instructions" >> "$TEMP_RESUME"
+    echo "" >> "$TEMP_RESUME"
+    echo "$USER_MESSAGE" >> "$TEMP_RESUME"
+fi
 
 # Launch fresh interactive session with handoff as initial prompt
 if [ "$SAFE_MODE" = true ]; then
