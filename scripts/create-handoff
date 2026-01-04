@@ -96,11 +96,45 @@ MAX_ASSISTANT_MSGS=15
 node -e '
 const fs = require("fs");
 const lines = fs.readFileSync(process.argv[1], "utf8").trim().split("\n");
-const keep = parseInt(process.argv[2], 10);
+let keep = parseInt(process.argv[2], 10);
 
 const MSG_TYPES = new Set(["user", "assistant", "system"]);
-const assistantIndexes = [];
+const MAX_OUTPUT_BYTES = 100000; // ~25K tokens target
+const MIN_MESSAGES = 5;
 
+// Clear large content blocks to reduce context size
+// Per Anthropic guidance: old tool results are not needed for understanding what happened
+function clearLargeContent(msgObj) {
+  // Helper to clear blocks in an array
+  function clearBlocks(arr) {
+    return arr.map(block => {
+      if (block.type === "tool_result") {
+        return { ...block, content: "[cleared]" };
+      }
+      if (block.type === "document") {
+        return { type: "text", text: "[document cleared]" };
+      }
+      return block;
+    });
+  }
+
+  // Handle message.content array (common structure)
+  if (msgObj.message && msgObj.message.content && Array.isArray(msgObj.message.content)) {
+    msgObj.message.content = clearBlocks(msgObj.message.content);
+  }
+  // Handle message as direct array (alternate structure)
+  if (Array.isArray(msgObj.message)) {
+    msgObj.message = clearBlocks(msgObj.message);
+  }
+  // Clear toolUseResult with file data (base64 encoded files)
+  if (msgObj.toolUseResult && msgObj.toolUseResult.file) {
+    msgObj.toolUseResult = { type: msgObj.toolUseResult.type, cleared: true };
+  }
+  return msgObj;
+}
+
+// Find all assistant message indexes
+const assistantIndexes = [];
 lines.forEach((ln, i) => {
   if (i === 0) return;
   try {
@@ -109,34 +143,56 @@ lines.forEach((ln, i) => {
   } catch {}
 });
 
-let cutFrom = 0;
-if (assistantIndexes.length > keep) {
-  cutFrom = assistantIndexes[assistantIndexes.length - keep];
-}
-
-const outLines = [lines[0]]; // keep header
-let dropped = 0;
-
-lines.forEach((ln, i) => {
-  if (i === 0) return;
-  let isMsg = false;
-  try { isMsg = MSG_TYPES.has(JSON.parse(ln).type); } catch {}
-
-  if (isMsg) {
-    if (i >= cutFrom) {
-      outLines.push(ln);
-    } else {
-      dropped++;
-    }
-  } else {
-    if (i >= cutFrom) outLines.push(ln);
+// Build output with adaptive message count
+function buildOutput(keepCount) {
+  let cutFrom = 0;
+  if (assistantIndexes.length > keepCount) {
+    cutFrom = assistantIndexes[assistantIndexes.length - keepCount];
   }
-});
 
-if (dropped > 0) {
-  console.error(`(Pruned: kept last ${keep} assistant messages, dropped ${dropped} earlier messages)`);
+  const outLines = [lines[0]]; // keep header
+  let dropped = 0;
+
+  lines.forEach((ln, i) => {
+    if (i === 0) return;
+    let parsed = null;
+    let isMsg = false;
+    try {
+      parsed = JSON.parse(ln);
+      isMsg = MSG_TYPES.has(parsed.type);
+    } catch {}
+
+    if (isMsg) {
+      if (i >= cutFrom) {
+        // Clear large content (tool results, documents) to reduce size
+        const cleared = clearLargeContent(parsed);
+        outLines.push(JSON.stringify(cleared));
+      } else {
+        dropped++;
+      }
+    } else {
+      if (i >= cutFrom) outLines.push(ln);
+    }
+  });
+
+  return { outLines, dropped };
 }
-console.log(outLines.join("\n"));
+
+// Try with initial keep count, reduce if too large
+let result = buildOutput(keep);
+let output = result.outLines.join("\n");
+
+while (output.length > MAX_OUTPUT_BYTES && keep > MIN_MESSAGES) {
+  keep -= 2;
+  result = buildOutput(keep);
+  output = result.outLines.join("\n");
+}
+
+if (result.dropped > 0 || output.length <= MAX_OUTPUT_BYTES) {
+  const sizeKB = Math.round(output.length / 1024);
+  console.error(`(Pruned: kept last ${keep} assistant messages, dropped ${result.dropped} earlier, ${sizeKB}KB output, content cleared)`);
+}
+console.log(output);
 ' "$SESSION_FILE" "$MAX_ASSISTANT_MSGS" > "$TEMP_SESSION"
 
 cat "$PROJECT_ROOT/prompts/analyze-transcript-for-handoff.md" > "$TEMP_PROMPT"
