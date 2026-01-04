@@ -1,12 +1,35 @@
 #!/bin/bash
 set -e
 
-# Usage: create-handoff <session_id>
+# Usage: create-handoff [--safe] <session_id>
 
-SESSION_ID="$1"
+SAFE_MODE=false
+SESSION_ID=""
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --safe)
+            SAFE_MODE=true
+            shift
+            ;;
+        -h|--help)
+            echo "Usage: create-handoff [--safe] <session_id>"
+            echo ""
+            echo "Options:"
+            echo "  --safe    Run without --dangerously-skip-permissions"
+            echo "  -h, --help    Show this help message"
+            exit 0
+            ;;
+        *)
+            SESSION_ID="$1"
+            shift
+            ;;
+    esac
+done
 
 if [ -z "$SESSION_ID" ]; then
-    echo "Usage: create-handoff <session_id>"
+    echo "Usage: create-handoff [--safe] <session_id>"
     exit 1
 fi
 
@@ -115,4 +138,8 @@ cat "$PROJECT_ROOT/prompts/resume-from-handoff.md" > "$TEMP_RESUME"
 cat "$HANDOFF_FILE" >> "$TEMP_RESUME"
 
 # Launch fresh interactive session with handoff as initial prompt
-claude "$(cat "$TEMP_RESUME")"
+if [ "$SAFE_MODE" = true ]; then
+    claude "$(cat "$TEMP_RESUME")"
+else
+    claude --dangerously-skip-permissions "$(cat "$TEMP_RESUME")"
+fi
