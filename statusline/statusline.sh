@@ -12,29 +12,22 @@ if git rev-parse --git-dir >/dev/null 2>&1; then
 fi
 
 # Context percentage
-PERCENT_INFO=""
+CTX_INFO=""
 if [ -n "$input" ]; then
     CONTEXT_SIZE=$(echo "$input" | jq -r '.context_window.context_window_size // 0' 2>/dev/null)
 
     if [ "$CONTEXT_SIZE" -gt 0 ] 2>/dev/null; then
         INPUT_TOKENS=$(echo "$input" | jq -r '.context_window.current_usage.input_tokens // 0' 2>/dev/null)
+        OUTPUT_TOKENS=$(echo "$input" | jq -r '.context_window.current_usage.output_tokens // 0' 2>/dev/null)
         CACHE_CREATE=$(echo "$input" | jq -r '.context_window.current_usage.cache_creation_input_tokens // 0' 2>/dev/null)
         CACHE_READ=$(echo "$input" | jq -r '.context_window.current_usage.cache_read_input_tokens // 0' 2>/dev/null)
 
-        CURRENT_TOKENS=$((INPUT_TOKENS + CACHE_CREATE + CACHE_READ))
+        CURRENT_TOKENS=$((INPUT_TOKENS + OUTPUT_TOKENS + CACHE_CREATE + CACHE_READ))
         PERCENT_USED=$((CURRENT_TOKENS * 100 / CONTEXT_SIZE))
 
-        if [ "$PERCENT_USED" -lt 50 ]; then
-            COLOR="\033[32m"
-        elif [ "$PERCENT_USED" -lt 80 ]; then
-            COLOR="\033[33m"
-        else
-            COLOR="\033[31m"
-        fi
-
-        PERCENT_INFO=" ${COLOR}${PERCENT_USED}%\033[0m"
+        CTX_INFO=" \033[90m(CTX: ${PERCENT_USED}%)\033[0m"
     fi
 fi
 
-# Output: directory, git branch, percentage
-echo -e "\033[1;32m➜\033[0m \033[36m${DIR_NAME}\033[0m${GIT_INFO}${PERCENT_INFO}"
+# Output: directory, git branch, context
+echo -e "\033[1;32m➜\033[0m \033[36m${DIR_NAME}\033[0m${GIT_INFO}${CTX_INFO}"
