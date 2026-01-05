@@ -12,11 +12,12 @@ if git rev-parse --git-dir >/dev/null 2>&1; then
 fi
 
 # Context percentage and session ID
-CTX_INFO=""
-SESSION_INFO=""
+STATUS_INFO=""
 if [ -n "$input" ]; then
-    CONTEXT_SIZE=$(echo "$input" | jq -r '.context_window.context_window_size // 0' 2>/dev/null)
+    PARTS=()
 
+    # Context percentage
+    CONTEXT_SIZE=$(echo "$input" | jq -r '.context_window.context_window_size // 0' 2>/dev/null)
     if [ "$CONTEXT_SIZE" -gt 0 ] 2>/dev/null; then
         INPUT_TOKENS=$(echo "$input" | jq -r '.context_window.current_usage.input_tokens // 0' 2>/dev/null)
         OUTPUT_TOKENS=$(echo "$input" | jq -r '.context_window.current_usage.output_tokens // 0' 2>/dev/null)
@@ -25,16 +26,21 @@ if [ -n "$input" ]; then
 
         CURRENT_TOKENS=$((INPUT_TOKENS + OUTPUT_TOKENS + CACHE_CREATE + CACHE_READ))
         PERCENT_USED=$((CURRENT_TOKENS * 100 / CONTEXT_SIZE))
-
-        CTX_INFO=" \033[90m(CTX: ${PERCENT_USED}%)\033[0m"
+        PARTS+=("CTX: ${PERCENT_USED}%")
     fi
 
     # Session ID
     SESSION_ID=$(echo "$input" | jq -r '.session_id // ""' 2>/dev/null)
     if [ -n "$SESSION_ID" ]; then
-        SESSION_INFO=" \033[90m(SESSION: ${SESSION_ID})\033[0m"
+        PARTS+=("SESSION: ${SESSION_ID}")
+    fi
+
+    # Combine parts
+    if [ ${#PARTS[@]} -gt 0 ]; then
+        IFS=', '
+        STATUS_INFO=" \033[90m(${PARTS[*]})\033[0m"
     fi
 fi
 
-# Output: directory, git branch, context, session
-echo -e "\033[1;32m➜\033[0m \033[36m${DIR_NAME}\033[0m${GIT_INFO}${CTX_INFO}${SESSION_INFO}"
+# Output: directory, git branch, status
+echo -e "\033[1;32m➜\033[0m \033[36m${DIR_NAME}\033[0m${GIT_INFO}${STATUS_INFO}"
