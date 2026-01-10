@@ -115,7 +115,16 @@ function clearLargeContent(msgObj) {
   function clearBlocks(arr) {
     return arr.map(block => {
       if (block.type === "tool_result") {
-        return { ...block, content: "[cleared]" };
+        // Check if tool_result contains images and note it
+        let hadImage = false;
+        if (Array.isArray(block.content)) {
+          hadImage = block.content.some(c => c.type === "image");
+        }
+        return { ...block, content: hadImage ? "[image cleared]" : "[cleared]" };
+      }
+      if (block.type === "image") {
+        // Clear base64 image data - these are huge (~300-500KB each)
+        return { type: "text", text: "[image cleared]" };
       }
       if (block.type === "document") {
         return { type: "text", text: "[document cleared]" };
@@ -132,9 +141,29 @@ function clearLargeContent(msgObj) {
   if (Array.isArray(msgObj.message)) {
     msgObj.message = clearBlocks(msgObj.message);
   }
-  // Clear toolUseResult with file data (base64 encoded files)
-  if (msgObj.toolUseResult && msgObj.toolUseResult.file) {
-    msgObj.toolUseResult = { type: msgObj.toolUseResult.type, cleared: true };
+  // Clear toolUseResult - can be object with .file, or array-like with numeric keys containing images
+  if (msgObj.toolUseResult) {
+    if (msgObj.toolUseResult.file) {
+      // File data (base64 encoded files)
+      msgObj.toolUseResult = { type: msgObj.toolUseResult.type, cleared: true };
+    } else if (typeof msgObj.toolUseResult === "object") {
+      // Check for array-like structure with images (keys: "0", "1", "2", etc.)
+      const keys = Object.keys(msgObj.toolUseResult);
+      const hasImages = keys.some(k => msgObj.toolUseResult[k]?.type === "image");
+      if (hasImages) {
+        // Clear image entries, keep text entries
+        const cleared = {};
+        keys.forEach(k => {
+          const item = msgObj.toolUseResult[k];
+          if (item?.type === "image") {
+            cleared[k] = { type: "text", text: "[image cleared]" };
+          } else {
+            cleared[k] = item;
+          }
+        });
+        msgObj.toolUseResult = cleared;
+      }
+    }
   }
   return msgObj;
 }
@@ -158,6 +187,7 @@ function buildOutput(keepCount) {
 
   const outLines = [lines[0]]; // keep header
   let dropped = 0;
+  let imagesCleared = 0;
 
   lines.forEach((ln, i) => {
     if (i === 0) return;
@@ -170,7 +200,17 @@ function buildOutput(keepCount) {
 
     if (isMsg) {
       if (i >= cutFrom) {
-        // Clear large content (tool results, documents) to reduce size
+        // Count images before clearing
+        if (parsed.message?.content && Array.isArray(parsed.message.content)) {
+          parsed.message.content.forEach(c => {
+            if (c.type === "tool_result" && Array.isArray(c.content)) {
+              imagesCleared += c.content.filter(b => b.type === "image").length;
+            } else if (c.type === "image") {
+              imagesCleared++;
+            }
+          });
+        }
+        // Clear large content (tool results, documents, images) to reduce size
         const cleared = clearLargeContent(parsed);
         outLines.push(JSON.stringify(cleared));
       } else {
@@ -181,7 +221,7 @@ function buildOutput(keepCount) {
     }
   });
 
-  return { outLines, dropped };
+  return { outLines, dropped, imagesCleared };
 }
 
 // Try with initial keep count, reduce if too large
@@ -196,7 +236,8 @@ while (output.length > MAX_OUTPUT_BYTES && keep > MIN_MESSAGES) {
 
 if (result.dropped > 0 || output.length <= MAX_OUTPUT_BYTES) {
   const sizeKB = Math.round(output.length / 1024);
-  console.error(`(Pruned: kept last ${keep} assistant messages, dropped ${result.dropped} earlier, ${sizeKB}KB output, content cleared)`);
+  const imgInfo = result.imagesCleared > 0 ? `, ${result.imagesCleared} images cleared` : "";
+  console.error(`(Pruned: kept last ${keep} assistant messages, dropped ${result.dropped} earlier, ${sizeKB}KB output${imgInfo})`);
 }
 console.log(output);
 ' "$SESSION_FILE" "$MAX_ASSISTANT_MSGS" > "$TEMP_SESSION"
